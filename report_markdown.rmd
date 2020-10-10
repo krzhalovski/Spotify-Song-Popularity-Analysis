@@ -1,0 +1,1216 @@
+---
+title: "Analyzing Spotify Trends and Predicting Song Popularity"
+author: "Danail Krzhalovski Sandra Andovska"
+date: "5/28/2020"
+output: pdf_document
+---
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(fig.width=12, fig.height=6, fig.path='Figs/',
+                      echo=FALSE, warning=FALSE, message=FALSE)
+```
+# 1. Data
+
+Spotify is a digital music service that enables users to remotely source millions of different songs on various record labels from a laptop, smartphone or other device. To recommend new music to users, and to be able to internally classify songs, Spotify assigns each song values from 13 different attributes/features. These features are mostly numerical values, but include some categorical data as well (the key the song is in, for instance). Spotify also assigns each song a popularity score, based on total number of clicks/listens. This dataset contains approximately 19000 songs from different Spotify playlists (i.e. '00s Rock Anthems', '50 Latin Classics', 'Alternative Hip Hop
+', etc.), which includes a popularity score and a set of metrics for each one. The dataset is available on Kaggle [[1]](https://www.kaggle.com/edalrami/19000-spotify-songs). There are two .cvs files, and after merging and removing irrelevant information we are working with the following 16 variables:  
+
+* **song_name**: The name of the song observed.  
+
+* **arist_name**: The name of the artist.  
+
+* **song_duration_ms**: Duration of the song in miliseconds. This will be changed to minutes for convenience.    
+
+* **acousticness**: A confidence measure from 0.0 to 1.0 of whether the song is acoustic. 1.0 represents high confidence the song is acoustic.  
+
+* **danceability**: Danceability describes how suitable a song is for dancing based on a combination of musical elements including tempo, rhythm stability, beat strength, and overall regularity. A value of 0.0 is least danceable and 1.0 is most danceable.  
+
+* **energy**: This is a measure from 0.0 to 1.0 and represents a perceptual measure of intensity and activity. Typically, energetic tracks feel fast, loud, and noisy. For example, death metal has high energy, while a Bach prelude scores low on the scale. Features contributing to this attribute include dynamic range, perceived loudness, timbre, onset rate, and general entropy. Songs with an energy value closer to 1 are considered highly energetic.  
+
+* **instrumentalness**: Predicts whether a song contains no vocals.  
+
+* **key**: This represents the overall musical key the song is composed in. Integers map to pitches using standard Pitch Class notation. E.g. 0 = C, 1 = C#/Db, 2 = D, and so on. For easier interpretation, we substitute the integers with their Pitch notation: 0 = C, 1 = C#, 2 = D, 3 = D#, 4 = E, 5 = F, 7 = F#, 8 = G, 9 = G#, 10 = A, 11 = A#, 12 = B.  
+
+* **liveness**: Detects the presence of an audience in the recording. Higher liveness values
+represent an increased probability that the song was performed live. A value above 0.8 provides strong likelihood that the song is live.  
+
+* **loudness**: This explains the overall loudness of a song in decibels (dB), which are averaged across the entire song and are useful for comparing relative loudness of tracks. Loudness is the quality of a sound that is the primary psychological correlate of physical strength (amplitude). Values typical range between -60 and 0 db.  
+
+* **audio_mode**: The mode of a composition indicates the modality (major or minor) of a song, the type of scale from which its melodic content is derived. Major is represented by 1 and minor is 0 in the dataset, but for easier interpretation we modify these variables as we did we the keys.  
+
+* **speechiness**: It detects the presence of spoken words in a song. The more exclusively speech-like the recording, the closer to 1.0 the attribute value. We can say that values below 0.33 most likely represent instrumental music and other non-speech-like tracks.  
+
+* **tempo**: The overall estimated tempo of a song in beats per minute (BPM). In musical terminology, tempo is the speed or pace of a given piece and derives directly from the average beat duration.  
+
+* **time_signature**: An estimated overall time signature of a track. The time signature (meter) is a notational convention to specify how many beats are in each bar (or measure).
+
+* **audio_valence**: A measure from 0.0 to 1.0 describing the musical positiveness conveyed by a song. Songs with high valence sound more positive.  
+
+* **song_popularity**: This is our dependent variable which takes values between 0 and 100 based on total streams.  
+
+Below is a simple overview of our data:
+```{r}
+dataset <- read.csv("C:/Users/sando/Documents/R/Statistical Learning 2/Project/Spotify19000.csv")
+head(dataset)
+```  
+  
+# 2. Data Exploration
+
+We can see that we are working with 18835 observations. Two of these features are represented as factors:  names and the artists of the songs. Judging by their count, we see that "song_name" has 13070 levels which is less than the number of observations. This doesn't seem too strange, since there are a lot of songs titled the same. But even so, the songs are collected from different playlists so we need to search for duplicates and remove them. Of course, prior to any analysis, we check whether our data has any missing values, counting column-wise:
+```{r}
+str(dataset)
+
+sapply(dataset, function(x) sum(is.na(x)))
+
+library(dplyr)
+dataset <- dataset %>% distinct()
+
+```  
+
+After removing duplicates, we are now working with 14926 observations.
+```{r}
+dim(dataset)
+```
+As mentioned earlier, the data was already cleaned up and tidied, but some additional modifications had to be made. We created factors for the 'audio_mode' and 'key' variables to make the data easier to interpret. Anyone with at least a bit of musical knowledge would prefer and actually find it easier to understand the analysis if the person could see the keys (C, C#, etc.) and modes (major, minor) instead of going back to the description of features to check their numerical values. We too transform the song duration from miliseconds to minutes, and factorize the time signature since it does not provide us a true numerical property.
+
+```{r}
+keys <- c('C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B')
+dataset$key <- factor(dataset$key, labels = keys)
+rm(keys)
+
+dataset$audio_mode <- factor(ifelse(dataset$audio_mode==0, 'minor', 'major'))
+
+dataset$song_duration_ms <- dataset$song_duration_ms/60000
+names(dataset)[names(dataset) == 'song_duration_ms'] <- 'song_duration'
+
+dataset$time_signature <- factor(dataset$time_signature)
+head(dataset)
+```
+
+We begin our analysis by checking which artists are a part of Spotify playlists the most. Throughout the years, Lady Gaga has been dominant in the pop genre since 2010s, so the fact that she showed up first in our list does not surprise us. Following is Drake, a major influencer on all generations, bringig his fusion of hip hop and contemporary R&B with trap and dancehall music. Kanye West has too shown to be a remarkable alternative and experimental hip hop artist, with his fair share in the pop genre. Eminem is one of the most famous artists in hip hop making his debut in 1996. By looking at the entire list, we can see that all artists are from different time periods, genres and cultures, so we can say that our data is not biased towards a specific type of music nor a time period.
+``` {r}
+t <- as.data.frame(summary(dataset$artist_name), columns = 'Number of Songs')
+colnames(t) <- 'Number of Songs'
+head(t, n=20)
+rm(t)
+```
+
+To review our dataset's content and shape, we provide the summaries and conclude that there is a lot of skewness in most of the predictors, except maybe for the duration of the song and valence. We can observe a negative skew in song popularity (our target variable) as well. The results are represented as follows, and we continue with a more detailed analysis.
+```{r}
+summary(dataset)
+```
+By taking a a look at how the popularity scores are distributed, one thing is noticeable instantly. The data appears to be slightly negatively skewed, with majority of the songs having a popularity score more than 40. The mean popularity score at a value of 48.75 and median is 52.  
+```{r}
+hist(dataset$song_popularity, probability =  TRUE, main = "Popularity Distribution", xlab="Song Popularity", col="grey")
+dens <- density(dataset$song_popularity, adjust=0.5, na.rm=TRUE)
+lines(dens)
+abline(v=mean(dataset$song_popularity),col="blue")
+```
+  
+##### We can assume that the audio mode, key, tempo and time signature of a song are composition elements, which we can make us of to describe and classify music.  
+
+In simple terms, the emotional center of music comes from one of two places: the major chord or the minor chord. If you're listening to music and you can sense happiness and you're at ease, you're probably listening to a song that uses mostly major chords to create that feeling. Any chord has a relative major or minor version. If we wanted to get moodier and possibly sad, we could think of contrasting those major chords into minors. It looks like people lean more towards songs with a major mode than those with a minor mode. Does this mean people like happier songs?
+```{r}
+barplot(table(dataset$audio_mode), xlab="Audio Mode", ylab="Number of Songs")
+```  
+
+In addition to the audio mode, the association of musical keys with specific emotional or qualitative characteristic was fairly common prior to the 20th century. When Mozart or Beethoven or Schubert wrote a piece in a Ab major, for example, they were well aware that this was the 'key of the grave' and knew that many in their audiences were as well. In a study by Spotify's Kenny Ning, it was shown that more than a third of 30 million songs observed are in one of four keys: G major, C major, D major, or A major. This reveals the kind of sounds we tend to see more commonly in music: bold, upbeat majors tend to outvote the moodier minors. In our data, the most common key is C, but very close to it are G and C# (Db). 
+```{r}
+barplot(table(dataset$key), xlab="Pitch Key", ylab="Number of Songs")
+```
+
+After doing some research, we were able to find poetic interpretations of these keys, written by Christian Schubart - a German poet, organist, composer, and journalist that layed out his thougts in "Ideas for an Aesthetic in Audio Art" (originally titled "Ideen zu einer Aesthetik der Tonkunst"), published in 1806 [[2]](https://wmich.edu/mus-theo/courses/keys.html):  
+
+* **C major**:	Completely pure. Its character is: innocence, simplicity, naïvety, children's talk.
+* **C minor**:	Declaration of love and at the same time the lament of unhappy love. All languishing, longing, sighing of the love-sick soul lies in this key.  
+* **C# major** (equivalent to D-flat): A leering key, degenerating into grief and rapture. It cannot laugh, but it can smile; it cannot howl, but it can at least grimace its crying. Consequently only  unusual characters and feelings can be brought out in this key.  
+* **C# minor**: Penitential lamentation, intimate conversation with God, the friend and help-meet of life; sighs of disappointed friendship and love lie in its radius.   
+* **G major**:	Everything rustic, idyllic and lyrical, every calm and satisfied passion, every tender gratitude for true friendship and faithful love,--in a word every gentle and peaceful emotion of the heart is correctly expressed by this key.
+* **G minor**:	Discontent, uneasiness, worry about a failed scheme; bad-tempered gnashing of teeth; in a word: resentment and dislike.  
+
+
+The least common musical key popular songs are composed in is D#:  
+
+* **D# major** (equivalent to E-flat): The key of love, of devotion, of intimate conversation with God. 
+*  **D# minor**: Feelings of the anxiety of the soul's deepest distress, of brooding despair, of blackest depression, of the most gloomy condition of the soul. Every fear, every hesitation of the shuddering heart, breathes out of horrible D# minor. If ghosts could speak, their speech would approximate this key.  
+
+
+Popular songs tend to have a faster tempo with an average BPM of 121.105. This is commonly known as 'allegro', ranging from 120 - 156 BPM. Modern music tempos are in this range: techno (120-140 BPM), house (115-130 BPM), hip-hop (80-120), and similar.  
+```{r}
+par(mfrow=c(1,2))
+
+hist(dataset$tempo, prob=TRUE, xlab="Tempo", main = "", col="grey")
+abline(v=mean(dataset$tempo),col="blue")
+
+dataset$tempo_factor <- factor(ifelse(dataset$tempo > 176, 'Presto', ifelse(dataset$tempo<=176 & dataset$tempo>156, 'Vivace', ifelse(dataset$tempo<=156 & dataset$tempo>120, 'Allegro', ifelse(dataset$tempo<=120 & dataset$tempo>108, 'Moderato', ifelse(dataset$tempo<=108 & dataset$tempo>76, 'Andante', 'Andagio'))))))
+
+barplot(table(dataset$tempo_factor), ylim=c(0,6000), xlab="Tempo", ylab="Number of Songs")
+
+par(mfrow=c(1,1))
+
+par(mfrow=c(1,2))
+```
+To elaborate, we can show the number of songs falling under each category of tempo [[3]](https://simple.wikipedia.org/wiki/Tempo):  
+
+* **Adagio** - slowly with great expression (66-76 bpm) 
+* **Andante** - at a walking pace (76-108 bpm) 
+* **Moderato** - at a moderate speed (108-120 bpm) 
+* **Allegro** - fast, quickly, and bright (120-156 bpm) 
+* **Vivace** - lively and fast (156-176 bpm) 
+* **Presto** - very, very fast (168-200 bpm)  
+
+and see that opposed to most songs being in allegro, the least are in andagio. We also have a clear indication of the consistency of mean tempos across all songs and their popularities, with a symmetrical distribution. We could say that the data is approximately normally distributed in terms of the songs' tempo. We too can observe a consistency of mean tempos across all keys.  
+```{r}
+par(mfrow=c(1,2))
+
+boxplot(dataset$song_popularity~dataset$tempo_factor, xlab="Tempo", ylab="Song Popularity")
+boxplot(dataset$tempo~dataset$key, xlab="Key", ylab="Tempo")
+
+par(mfrow=c(1,1))
+dataset$tempo_factor<-NULL
+```  
+  
+  
+The most common time signature used in music, and not surprisingly in our dataset, is the 4/4 meter (denoted as 4 in the column of time signatures). This is known as "4x4"or "common time".  
+```{r}
+barplot(table(dataset$time_signature), xlab="Time Signature", ylab="Number of Songs")
+```  
+
+We too can see that the average duration of a song is between 3 and 4 minutes:  
+```{r}
+hist(dataset$song_duration, prob=TRUE, breaks=50, xlim=c(0,8), xlab="Song Duration", main = "", col="grey")
+abline(v=mean(dataset$song_duration),col="blue")
+```  
+
+##### Now, we continue by analyzing the univariate distribution of the numerical variables not included in the previous plots:    
+```{r}
+par(mfrow=c(2,2))
+
+hist(dataset$acousticness, prob=TRUE, xlab="Acousticness", main = "", col="grey")
+lines(density(dataset$acousticness, adjust=0.5, na.rm=TRUE))
+abline(v=mean(dataset$acousticness),col="blue")
+
+hist(dataset$danceability, prob=TRUE, xlab="Danceability", main = "", col="grey")
+lines(density(dataset$danceability, adjust=0.5, na.rm=TRUE))
+abline(v=mean(dataset$danceability),col="blue")
+
+hist(dataset$energy, prob=TRUE, xlab="Energy", main = "", col="grey")
+lines(density(dataset$energy, adjust=0.5, na.rm=TRUE))
+abline(v=mean(dataset$energy),col="blue")
+
+hist(dataset$instrumentalness, prob=TRUE, xlab="Instrumentalness", main = "", col="grey")
+lines(density(dataset$instrumentalness, adjust=0.5, na.rm=TRUE))
+abline(v=mean(dataset$instrumentalness),col="blue")
+
+par(mfrow=c(1,1))
+```  
+
+```{r}
+par(mfrow=c(2,2))
+
+hist(dataset$liveness, prob=TRUE, xlab="Liveness", main = "", col="grey")
+lines(density(dataset$liveness, adjust=0.5, na.rm=TRUE))
+abline(v=mean(dataset$liveness),col="blue")
+
+
+hist(dataset$loudness, prob=TRUE, xlab="Loudness", main = "", col="grey")
+lines(density(dataset$loudness, adjust=0.5, na.rm=TRUE))
+abline(v=mean(dataset$loudness),col="blue")
+
+
+hist(dataset$speechiness, prob=TRUE, xlab="Speechiness", main = "", col="grey")
+lines(density(dataset$speechiness, adjust=0.5, na.rm=TRUE))
+abline(v=mean(dataset$speechiness),col="blue")
+
+
+hist(dataset$audio_valence, prob=TRUE, xlab="Audio Valence", main = "", col="grey")
+lines(density(dataset$audio_valence, adjust=0.5, na.rm=TRUE))
+abline(v=mean(dataset$audio_valence),col="blue")
+
+par(mfrow=c(1,1))
+```  
+
+As observed in the summaries of the variables, the majority are either highly-left or highly-right skewed, while 'danceability' and 'energy' have somewhat a similar distribution. This leads to the assumption that they might be correlated. Note that:  
+
+* Danceability is most dense in the interval [0.5, 0.8] telling us that popular songs are quite danceable.  
+* Energy peaks around 0.7 and is most dense around the same interval.  
+* Audio valance has a symmetrical distribution and it too might be correlated with danceability and energy, considering happy songs make people energetic and wanting to  dance.  
+* The majority of the songs tend to have very low liveness, i.e. they are not recorded during a live session, and songs are between -10 and 0 dB. Acousticness and speechiness seem to have a similar distribution, saying that most songs are acoustic and have less spoken words (which too might be concluded looking at the instrumentalness over the songs).  
+
+
+##### We can divide the song popularity into low and high, based on whether it is below or above 75. We choose 75, since this is the border of the top 25% of songs.  Continuing our analysis, we observe that:
+* 981 songs are very popular, with a rating above 75, which comprises approximately 61% of our total data.  
+* Songs that are more popular tend to last 3-4 minutes, and their acousticness level is below 0.2 meaning that the more a song is popular, the less likely that it's acoustic.  
+* Danceability and energy have a very similar mass, saying when songs are more popular they have a moderate-to-high value in both of them, i.e. the songs are more danceable and energetic.  
+* Instrumentalness is most likely to be 0 when a song is very popular, and when liveness is more than 0.8 we can say that there is strong likelihood that the song is studio-recorded. Our values of liveness for songs with popularity > 75 are concentrated around 0.1.  
+* Popular songs tend to be louder, mostly ranging from -6 to -4 dB, and contain less-to-no lyrics.  
+* As mentioned, the average tempo is around 120 BPM, with popular songs having a tempo in the range of (90,130). No surprise, people also like to listen to moderately cheerful songs - just the right amount of mellow and happy.  
+
+```{r}
+cat("Number of highly popular songs: ", length(which(dataset$song_popularity > 75)))
+cat("Percentage of highly popular songs: ", length(which(dataset$song_popularity > 75))/length(dataset))
+pop_factor <- factor(ifelse(dataset$song_popularity > 75, 'high','low'))
+p <- pop_factor =='high'
+rm(pop_factor)
+
+par(mfrow=c(2,2))
+
+plot(dataset$song_duration, dataset$song_popularity, col=p+1, pch=p*15+1, ylab="Song Popularity", xlab="Duration in minutes", xlim=c(0,6))
+
+plot(dataset$acousticness, dataset$song_popularity, col=p+1, pch=p*15+1, ylab="Song Popularity", xlab="Acousticness")
+
+plot(dataset$danceability, dataset$song_popularity, col=p+1, pch=p*15+1, ylab="Song Popularity", xlab="Danceability", xlim=c(0.5,0.9))
+#plot(dataset$danceability, dataset$song_popularity, col=p+1, pch=p*15+1, ylab="Song Popularity", xlab="Danceability")
+
+plot(dataset$energy, dataset$song_popularity, col=p+1, pch=p*15+1, ylab="Song Popularity", xlab="Energy", xlim=c(0.5,0.9))
+#plot(dataset$energy, dataset$song_popularity, col=p+1, pch=p*15+1, ylab="Song Popularity", xlab="Energy")
+
+par(mfrow=c(1,1))
+
+
+par(mfrow=c(2,2))
+
+plot(dataset$instrumentalness, dataset$song_popularity, col=p+1, pch=p*15+1, ylab="Song Popularity", xlab="Instrumentalness")
+
+plot(dataset$liveness, dataset$song_popularity, col=p+1, pch=p*15+1, ylab="Song Popularity", xlab="Liveness", xlim=c(0,0.2))
+#plot(dataset$liveness, dataset$song_popularity, col=p+1, pch=p*15+1, ylab="Song Popularity", xlab="Liveness")
+
+plot(dataset$loudness, dataset$song_popularity, col=p+1, pch=p*15+1, ylab="Song Popularity", xlab="Loudness")
+
+plot(dataset$speechiness, dataset$song_popularity, col=p+1, pch=p*15+1, ylab="Song Popularity", xlab="Speechiness")
+
+par(mfrow=c(1,1))
+
+
+par(mfrow=c(1,2))
+
+plot(dataset$tempo, dataset$song_popularity, col=p+1, pch=p*15+1, ylab="Song Popularity", xlab="Tempo", xlim=c(80,140))
+#plot(dataset$tempo, dataset$song_popularity, col=p+1, pch=p*15+1, ylab="Song Popularity", xlab="Tempo")
+
+plot(dataset$audio_valence, dataset$song_popularity,  col=p+1, pch=p*15+1, ylab="Song Popularity", xlab="Valence")
+
+par(mfrow=c(1,1))
+
+rm(p)
+```  
+  
+We further need to check the covariance matrix to see the direction of the linear relationship between variables, but since correlation measures both its direction and strength, we use a colour correlation plot just to see how our data behaves.  
+```{r}
+dataset_cor <-cor(scale(dataset[c(-1, -2, -8, -11, -14)]))
+
+library(corrplot)
+library(RColorBrewer)
+
+corrplot(dataset_cor, type="lower", order="hclust",col=brewer.pal(n=8, name="RdYlBu"))
+```  
+
+And the numerical values for the correlation between features are shown in the following figure:  
+```{r}
+corrplot(dataset_cor, method="number")
+rm(data_corr)
+```  
+
+In the plots above, we observe in the strongest tones existing correlations between some of the predictors. The strongest correlation is between loudness and energy, meaning if the loudness of a track increases then chances of it being energetic are quite higher and vice versa. The second LARGEST is a negative correlation between energy and acOusticness. Hence, we face a problem of multicollinearity.  
+
+
+# 3. Regression Models  
+
+Judging by the looks of our data, and the relationship among the predictors and the response variable, we do not expect a linear model to help us predict a song's popularity, but we do try out several in the following section.  
+
+
+## 3.1. Linear Regression  
+
+We start by checking how the null model fits the data. This essentially has the same meaning as "null hypothesis": the model if the null hypothesis is true. This explains the marginal distribution on response variable not taking into account any predictors, i.e. really just the mean of the outcome. We show the R2 statistic providing us a proportion of variance explained, and Root Mean Squared Error. The mean squared error tells us how close a regression line is to a set of points, and we are simply taking its root.  
+```{r}
+library(boot)
+mod_h0 <- lm(song_popularity ~ 1, data = dataset)
+summary(mod_h0)
+cat("\n\n\n")
+RSS_h0 <- sum(residuals(mod_h0)^2)
+
+MSE_h0 <- mean(residuals(mod_h0)^2)
+
+R2_h0 <- summary(mod_h0)$r.squared
+RMSE_h0 <- summary(mod_h0)$sigma 
+```  
+R2 is 0, indicating that this model explains none of the variability of the response data around its mean. RMSE is equivalent to Residual Standard Error, and its value for the null model is `r RMSE_h0`.  
+
+Next, we fit the full (saturated) We start by estimating the full model, containing all regressors available. The aim is to check the signifcance of each predictor. Here, we give rise to the issue of multicolinearity. We use R's function vif() which stands for Variance Inflation Factors and assesses how much the variance of an estimated regression coefficient increases if the predictors are correlated. If no factors are correlated, VIF's will be all 1.  
+```{r}
+dataset <- dataset[,c(-1,-2)]
+mod_full <- lm(song_popularity ~ ., data = dataset)
+car::vif(mod_full)
+```  
+We see that all VIF values are around 1, excluding acousticness with a VIF of 2.0557, energy with 3.9067, and loudness with 3.0310. Since energy has the highest VIF, we decide to drop it from our dataset and refit our model and double check whether a predictor would cause an issue in our model.    
+```{r}
+dataset<-dataset[,-4]
+mod_full <- lm(song_popularity ~ ., data = dataset)
+
+car::vif(mod_full)
+```  
+Now, by checking the VIF values of the coefficient, we can observe that all of them are around 1. This justifies our choice to drop one of the predictors at the mere beginning.  
+We continue by checking the summary of the full model:  
+$$ popularity = \beta_{0}\ + \beta_{1}duration\ + \beta_{2}acousticness\ + \beta_{3}danceability\ + \beta_{4}instrumentalness\ + \beta_{5}key\ + \beta_{6}liveness\ +$$
+$$ \beta_{7}loudness\ + \beta_{8}mode\ + \beta_{9}speechiness\ + \beta_{10}tempo\ + \beta_{11}signature\ + \beta_{12}valence\ $$  
+```{r}
+summary(mod_full)
+R2_full <- summary(mod_full)$r.squared
+RMSE_full <- summary(mod_full)$sigma
+```  
+We can see that the p-value of the F-statistic is < 2.2e-16, which is highly significant. This means that, at least, one of the predictor variables is significantly related to the target variable, in our case - song popularity. To see which predictor variables are significant, we examine the coefficients table, which shows the estimate of regression beta coefficients and the associated t-statitic p-values:
+```{r}
+summary(mod_full)$coefficients
+```  
+For a given the predictor, the t-statistic evaluates whether or not there is significant association between the predictor and the outcome variable, that is whether the beta coefficient of the predictor is significantly different from zero. It can be seen that, changing the following variables is significantly associated to changes in song popularity:  
+
+* danceability  
+* instrumentalness  
+* liveness  
+* speechiness  
+* tempo  
+* audio valence  
+
+i.e. they all have a p-value <0.001, meaning that there is less than a 0.1% chance that the coefficient might be equal to 0 and thus be insignificant. But the estimates of the regression coefficients are subject to sampling uncertainty. Therefore, we will never exactly estimate the true value of these parameters from sample data in an empirical application. However, we may construct confidence intervals, at a 95% level:  
+```{r}
+confint(mod_full)
+```  
+For some of the estimates, the interval does not contain the value zero. Those that we suspect do not have a great effect on the response variable are:  
+
+* song duration  
+* acousticness  
+* key  
+* time signature.  
+
+The overall quality of the model can be assesed by examining RMSE, equaling to `r RMSE_full`, which is not a huge improvement from the null model.  Neither has the variability around the mean been explained, now equaling to `r R2_full`. We suspect that some of the predictors influence others. We suspect that the effect of acousticness on popularity also depends on instrumentalness, similarly to how valance has an effect on popularity as it might be dependent on loudness and danceability. We too expect that the effect of loudness on popularity depends on liveness too.  
+```{r}
+mod_inter <- lm(song_popularity ~ . + acousticness:instrumentalness +
+                       audio_valence:loudness:danceability +
+                       liveness:loudness, data=dataset)
+
+summary(mod_inter)
+R2_inter <- summary(mod_inter)$r.squared
+RMSE_inter <- summary(mod_inter)$sigma
+```  
+Although explanation of variability has bumped up to `r R2_inter`, we can see that the RMSE is now `r RMSE_inter` and has not decreased by even 0.5%, which is not at all significant. Hence, we continue by analyzing the residuals on our full model.  
+```{r}
+par(mfrow=c(2,2))
+plot(mod_full)
+par(mfrow=c(1,1))
+```  
+**Residuals vs Fitted**  
+There isn't a clear pattern in the residuals and they are m distributed. Since, there isn't any evidence of heteroscedasticity (non-constant variance in the errors).  
+
+**Normal Q-Q**  
+Notice the points fall along a line in the middle of the graph, but curve off in the extremities. This means our data has more extreme values. We could not fix the issue, because applying various transformation to the response variable yielded even worse results.   
+
+**Scale-Location**  
+The presence of heteroscedasticity can be seen also from how the studentized residuals spread along the ranges of predicted variables. We can see that the residuals are spread equally, even though our horizontal line isn't quite straight.  
+
+**Residuals vs Leverage**  
+We can see that there are points which are outside the red dashed Cook's distance line. These are points that would be influential in the model and removing them would likely alter the regression results.  
+```{r}
+dataset <- dataset[c(-6504,-9718,-14452), ]
+dim(dataset)
+
+mod_full <- lm(song_popularity ~ ., data = dataset)
+
+summary(mod_full)
+R2_full <- summary(mod_full)$r.squared
+RMSE_full <- summary(mod_full)$sigma
+```  
+We observe no significant decrease in RMSE (`r RMSE_full`) after removing the observations. Although there is a change of sign in some predictors, there is no real change in their significance, nor in performance of the model. However, we leave them out of the dataset. As we can see, many of the variables used in our multiple regression model are in fact not associated with the response (i.e. they are non-significant) and including such irrelevant variables leads to unnecessary complexity in the resulting model. This was also suspected when we constructed confidence intervals for the estimated coefficients of the regression. Some of the intervals did not contain 0, which leads to the rejection of the null hypothesis i.e. they should have a say in predicting song popularity.  
+```{r}
+confint(mod_full)
+```  
+This is the reason why we perform a feature selection using backward selection. We start with all variables in the model, and remove the variable with the largest p-value. The new (p-1) - variable model is fit, and the variable with the largest p-value is removed. Here, we consider Akaike Information Criterion (AIC) and remove model that shows lowest AIC.  
+```{r}
+step_mod <- step(mod_full, steps=10,  trace=1, direction="backward") 
+```  
+  
+  
+We observe that we have excluded 2 predictors from the fit (time signature and acousticness), such that the selected model is:
+
+$$ popularity = \beta_{0}\ + \beta_{1}duration\ + \beta_{2}key\ + \beta_{3}mode\ + \beta_{4}speechiness\ + \beta_{5}tempo\ + \beta_{6}loudness\ $$
+$$+ \beta_{7}liveness\ + \beta_{8}danceability\ + \beta_{9}valence\ + \beta_{10}instrumentalness\ $$
+
+
+```{r}
+mod_bw <- lm(song_popularity ~ song_duration + key + audio_mode + speechiness + tempo + loudness + liveness + danceability + audio_valence + instrumentalness, data=dataset)
+
+summary(mod_bw)
+R2_bw <- summary(mod_bw)$r.squared
+RMSE_bw <- summary(mod_bw)$sigma
+```  
+The coefficients that have the largest effect on our target varialbe are:  
+
+* Danceability with 8.481296, meaning with each unit increase, song popularity increases by roughly 8.48;  
+* Instrumentalness with -8.017524, meaning with each unit increase, song popularity decreases by roughly 8.02;  
+* Audio valence with -7.460624, meaning with each unit increase, song popularity decreases by roughly 7.46.  
+  
+Of course we all suspected that the more danceable a song is the more popularity it would gain, but what struck us off guard is that with every increase of audio valence of a song, its popularity decreases **dramitically**. This might be due to the fact that music features subtle and gradual changes along these dimensions (song attributes) within a broader emotion category remaining the same throughout the musical segment. Sometimes, listeners do not even perceive any discrete emotion in the music. They merely perceive a certain level of arousal.  The effect of instrumentalness is clear, less vocals in a song do not seem that appealing the people's taste.  
+  
+  
+Once we are done with training our model, we can not just assume that it is going to work well on data that it has not seen before. In other words, we can not be sure that the model will have the desired accuracy and variance in production environment. We need some kind of assurance of the accuracy of the predictions that our model is putting out. For this, we need to validate our model. We use 5-Fold Cross Validaion: we split the entire data randomly into 5 folds, because using 5 or 10 as these values have been shown empirically to yield test error rate estimates that suffer neither from excessively high bias nor from very high variance. We fit the model using the K-1 i.e. 4 folds, and validate the model using the the remaining K-th fold. We repeat this process until every K-fold serves as the test set. Then take the average of the scores, which will be the performance metric for the model.  
+  
+Computational issues aside, we choose K-fold CV instead of LOOCV, because it often gives more accurate estimates of the test error rate. To perform this, we use R's built-in functions cv.glm() function. We compare the results of the full and reduced obtained by backward selection. We get two errors in the delta component. The first one is the average mean-squared error that we obtain from doing K-fold CV. The second is the average mean-squared error that you obtain from doing K-fold CV, but with a bias correction because we have not used LOOCV.  
+```{r}
+library(boot)
+mod_full <- glm(song_popularity ~ song_duration + key + audio_mode + speechiness + tempo + loudness + liveness + danceability + audio_valence + instrumentalness, data=dataset)
+mod_full_cv <- cv.glm(dataset, mod_full, K=5) 
+cv_full <- mod_full_cv$delta[1]
+
+mod_bw <- glm(song_popularity ~ song_duration + key + audio_mode + speechiness + tempo + loudness + liveness + danceability + audio_valence + instrumentalness, data=dataset)
+mod_bw_cv <- cv.glm(dataset, mod_bw, K=5) 
+cv_bw <- mod_bw_cv$delta[1]
+
+err_1 <- matrix(c(sqrt(cv_full), sqrt(cv_bw)), ncol=1, byrow=TRUE)
+rownames(err_1) <- c("Full model","Reduced Model")
+colnames(err_1) <- "Root Mean Squared Error"
+err_1 <- as.table(err_1)
+err_1
+```  
+The results vary from time to time, because of the constant update of "random.seed" - a vector containing the random number generator (RNG) state for random number generation in R. 9/20 times the reduced model turned out to be a better fit than the full model, but the error did not reduce significantly. Because we couldn't get a lower error, we suspect that the reason for this is either removing the energy variable (although it seemed justified at the time), or that the variable selection is not good enough, so we further use Ridge regression to impose a penalty term on predictors to impose a bias on the esitmators and LASSO for the latter.  
+
+## 3.2 Ridge Regression  
+The least square method shown previously finds the coefficients that best fit the data. One more condition to be added is that it also finds the unbiased coefficients. Unbiased means that least squares doesn't consider which independent variable is more important than others, i.e. simply finds the coefficients for a given data set. Therefore, this kind of model becomes more complex as new variables are added. It can be said that an OLS model has the lowest bias and the highest variance. To overcome this issue, we fit a ridge regression to our model. We are trying to find coefficient estimates that would minimize the RSS in a linear model, by adding a shrinkage penalty called L2-norm, which is the sum of the squared coefficients $\lambda\sum_{j=1}^p\beta_j^2$ where $\lambda$ is a constant that can fine-tune amount of the penalty. This penalty is small when the coefficient estimates are close to zero, so it has the effect of shrinking towards 0. The tuning parameter lambda serves to control the relative impact of these two terms on the regression coefficient estimates. As lambda increases, the flexibility of the ridge regression fit decreases, leading to decreased variance but increased bias. This too may resolve the issue of multicollinearity, therefore we include the "energy" variable in this model.  
+```{r}
+dataset <- read.csv("C:/Users/sando/Documents/R/Statistical Learning 2/Project/Spotify19000.csv")
+
+library(dplyr)
+dataset <- dataset %>% distinct()
+
+keys <- c('C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B')
+dataset$key <- factor(dataset$key, labels = keys)
+rm(keys)
+
+dataset$audio_mode <- factor(ifelse(dataset$audio_mode==0, 'minor', 'major'))
+
+dataset$song_duration_ms <- dataset$song_duration_ms/60000
+names(dataset)[names(dataset) == 'song_duration_ms'] <- 'song_duration'
+
+dataset$time_signature <- factor(dataset$time_signature)
+df <- dataset #just in case
+
+dataset <- dataset[, c(-1,-2)]
+dataset <- dataset[c(-6504,-9718,-14452), ]
+
+```  
+   
+To perform Ridge Regression, we divide our data into a training and testing set and fit a ridge regression model using 5-fold Cross Validation to find the optimal value for $\lambda$.  
+```{r}
+##We divide our data into a training and testing set.
+set.seed(42)
+dataset <- dataset[sample(nrow(dataset)),] #randomly shuffle data
+split <- round(nrow(dataset) *0.80)
+train_set <- dataset[1:split, ]
+test_set <- dataset[(split+1):nrow(dataset),]
+
+
+###Creation of model matrix
+x_train <- model.matrix(~., data=train_set[,-14])
+x_test <- model.matrix(~., data=test_set[,-14])
+
+library(glmnet)
+
+
+###Ridge regression w/ 5-fold CV:
+
+###We modify the grid so we compute model fits for a particular value of lambda that is not 
+#one of the original grid values.
+ridge_cv<-cv.glmnet(x_train[,-1], train_set$song_popularity, alpha=0, type.measure = 'mse', standardize=T, K=5) #-1 not to include intercept
+```  
+  
+We see that with lambda larger than, we have a constant error and there is no change in the plot. As more regressors are pushed to zero, the MSE in the validation set increases. As we decrease the lambda parameter, we can see that MSE decreases. This starts from setting lambda to approxiamtely 2, and stops when lambda is approximately 0 and we have a constant decrease in MSE. The most appropriate values for lambda are plotted with two verical lines: one for the "best" value of lambda and other for 1 standard error above it.  
+```{r}
+plot(ridge_cv) 
+```  
+The optimal value of lambda is very close to 0, which means that there is very little-to-no regularization effect and the model we fit will be equivalent to the previous full model. This is because ridge does not shrink any variables to exactly 0, hence all predictors will be used in the fit.  
+```{r}
+pred_ridge <- predict(ridge_cv, newx=x_test[,-1], lambda=lambda_min)
+
+MSE_ridge <- mean((pred_ridge-test_set$song_popularity)^2)
+RMSE_ridge <- sqrt(MSE_ridge)
+cat("RMSE_ridge: ", RMSE_ridge)
+```  
+As suspected, performing Ridge Regression did not improve our results, obtaining a RMSE of `r RMSE_ridge`. Now, we inspect whether the choice of variables for our model poses the problem.  
+
+## 3.3 LASSO  
+We saw that ridge regression with a wise choice of  lambda  didn't really outperform least squares. Now, we're interested in whether the LASSO can yield either a more accurate and a more interpretable model. In order to fit a lasso model, we again use the glmnet() function: however, this time we use the argument alpha=1. This type of regression analysis is a shrinkage and variable selection method for linear regression models. The goal of LASSO regression is to obtain the subset of predictors that minimizes prediction error for a quantitative response variable. LASSO does this by imposing a constraint on the model parameters that causes regression coefficients for some variables to shrink toward zero: a penalty term called L1-norm, which is the sum of the absolute coefficients $\lambda\sum_{j=1}^p|\beta_j|$ where $\lambda$ is a constant as in Ridge Regression. Variables with a regression coefficient equal to zero after the shrinkage process are excluded from the model. Variables with non-zero regression coefficients variables are most strongly associated with the response variable.  
+  
+To perform LASSO, we use the same training and testing set defined previously. We fit the model model using 5-fold Cross Validation to find the optimal value for $\lambda$. 
+```{r}
+lasso_cv <- cv.glmnet(x_train[,-1], train_set$song_popularity, alpha=1, type.measure = 'mse', standardize=T, K=5)
+```  
+  
+  
+Similarly to Ridge Regression, we see that with lambda very large, we have a constant error and there is no change in the plot. As more regressors are pushed to zero, the MSE in the validation set starts to incerase. As we decrease the lambda parameter, i.e. set it to -3 can see a constant MSE decrease.  
+```{r}
+plot(lasso_cv)
+```  
+We see that with an optimal value for lambda of `r lasso_cv$lambda.min`, LASSO has discarded most variables: 
+```{r}
+coefs <- coef(lasso_cv, lambda="lambda.min")
+coefs
+```  
+And it has left us the following to work with, which in comparison to our reduced model, does not include most of the predictors: 
+```{r}
+coef_df <- data.frame(name = coefs@Dimnames[[1]][coefs@i + 1], coefficient = coefs@x) 
+coef_df[order(coef_df$coefficient, decreasing = T),]
+```  
+hence, the minimum value of the RMSE is reached for the following model:  
+
+$$ popularity = \beta_{0}\ + \beta_{1}dacenability\ + \beta_{2}instrumentalness\ + \beta_{3}key_{Csharp}\ + \beta_{4}valence $$  
+
+We see that what makes a song popular, according to LASSO, is people's perception of danceability and valence. As mentioned previously, songs that are more danceable, such as club songs which we sing to, end up being more popular than the ones containing no vocals. We see LASSO considers whether a song has an overall key of C# as an important factor to our analysis. By plotting the solid black line of ridge regression for lambda within 1 standard error, we seem to get the least squares estimates, and by plotting the optimal vlaue for lambda in a blue dashed line, we get the estimates used to fit our LASSO model.  
+
+```{r}
+m_lasso <- glmnet(x_train[,-1], train_set$song_popularity, alpha=1, type.measure = 'mse', standardize=T, K=5)
+
+plot(m_lasso, xvar="lambda", label=TRUE) 
+###By plotting the solid black line of ridge regression for lambda within 1 standard error, we seem to get the least squares estimates.
+abline(v=log(lasso_cv$lambda.1se), lty=1) 
+
+###Plotting the optimal vlaue for lambda in a blue dashed line, we get the estimates used to fit our LASSO model.
+abline(v=log(lasso_cv$lambda.min), lty=2, col=4) #minimum lambda
+```  
+```{r}
+pred_lasso <- predict(lasso_cv, newx=x_test[,-1],lambda=lambda_best)
+
+MSE_lasso <- mean((pred_lasso-test_set$song_popularity)^2)
+
+RMSE_lasso <- sqrt(MSE_lasso)
+```  
+Producing a RMSE of `r RMSE_lasso`, we conclude that neither penalty term improves our model.  
+The final results from our deterministic approaches are the following:  
+```{r}
+err_2 <- matrix(c(sqrt(cv_bw), RMSE_ridge, RMSE_lasso), ncol=1, byrow=TRUE)
+rownames(err_2) <- c("Linear Model", "Ridge Regression", "LASSO")
+colnames(err_2) <- "Root Mean Squared Error"
+err_2 <- as.table(err_2)
+err_2
+```
+
+## 3.4 Bayesian Approach  
+But, what if we don't apply the traditional frequenst statistics to solve a problem? Here we show another approach which is more intuitive and close to how we think about probability in everyday life and yet is a very powerful tool: Bayesian statistics, which has its foundations on conditional probability and Bayes theorem. There is a key element when we want to build a model under Bayesian approach: the Bayes factor - the ratio of the likelihood probability of two competing hypotheses (usually null and alternative hypothesis) and it helps us to quantify the support of a model over another one. In Bayesian modelling, the choice of prior distribution is a key component of the analysis and can modify the results; however, the prior starts to lose weight when we add more data. We use the "BAS" package to conduct a Bayesian regression, using Bayesian Model Averaging (BMA) that provides a mechanism for accounting model uncertainty, and we indicate following parameters:  
+
+* **Prior:** Zellner-Siow Cauchy that uses a Cauchy distribution extended for multivariate cases. This is an approximation to the Jeffreys-Zellner-Siow prior that uses the Jeffreys prior on sigma and the Zellner-Siow Cauchy prior on the coefficients.  
+* **Model prior:** Uniform as a prior distribution on models, to assign equal probabilities to all.  
+* **Method:** Markov Chain Monte Carlo (MCMC) to improve model search efficiency.  
+```{r}
+dataset <- dataset[, -4]
+train_set <- train_set[,-4]
+test_set <- test_set[,-4]
+
+library("BAS")
+mod_bas <- bas.lm(song_popularity ~ song_duration + acousticness + danceability + instrumentalness + liveness + loudness + speechiness + tempo + audio_valence, data = train_set, method = "MCMC", prior = "ZS-null", modelprior = uniform())
+```  
+We can see the top 5 models with zero-one indicators for variable inclusion, displayed with a column with the Bayes factor for each model to the highest probability model (BF), the posterior probabilities of the models (PostProbs), the R2 of the models, their dimension (dim) and the log marginal likelihood (logmarg) under the selected prior distribution.  
+```{r}
+summary(mod_bas)
+```  
+We further analyze the residuals and see how they differ from the regular multivariate linear regression we observed previously.  
+```{r}
+par(mfrow=c(2,2))
+plot(mod_bas)
+par(mfrow=c(1,1))
+```  
+
+* **Residuals vs Fitted**  
+There isn't a clear pattern in the residuals and they are symmetrically distributed. Heteroscedasticity has been confirmed yet again.  
+* **Model Probabilities**  
+This plot displays the cumulative probability of the models in the order they are sampled. This shows that the cumulative probability starts to level off after 20 model trials as each additional models adds only a small increment to the cumulative probability. The model search stops at 50-something, instead of enumerations of $2^9$ combinations.  
+* **Model Complexity**  
+This plot shows the dimension of each model, that is the number of regression coefficients including the intercept versus the log of the marginal likelihood of the model. In this case, we can see that highest log marginal can be reached from 5 to 8 dimensions.  
+* **Inclusion Probabilities**  
+We can observe the marginal posterior inclusion probabilities for each of the covariates, with marginal posterior inclusion probabilities that are greater than 0.5 shown in red (important variables for explaining the data and prediction). In the graph, we can see that the most important predictors include those obtained with LASSO as well as liveness.  
+  
+We obtain the coefficient estimates and standard deviations to be able to examine the marginal distributions for the significant predictors:  
+
+```{r}
+coeffs <- coef(mod_bas)
+
+par(mfrow=c(2,5))
+plot(coeffs, subset=1:10, ask=F)
+par(mfrow=c(1,1))
+```  
+The vertical line corresponds to the posterior probability that the coefficient equals to 0. On the other hand, the shaped curve shows the density of possible values where the coefficient is non-zero. It is worthy to mention that the height of the line is scaled to its probability. This implies that the intercept, and danceability, instrumentalness and audio valence show no line denoting non-zero probability. We can also obtain 95% confidence intervals:  
+```{r}
+confint(coeffs)
+
+predictions <- predict(mod_bas, test_set, estimator="BMA", interval = "predict", se.fit=TRUE)
+
+MSE_bas <- mean((predictions$Ybma-test_set$song_popularity)^2)
+RMSE_bas <- sqrt(MSE_bas)
+```  
+By fitting the model to the test data, we are able to obtain a RMSE of `r RMSE_bas`, which is the lowest but does not differ much from the ones obtained previously.  
+
+## 3.5 Results and Discussion
+```{r}
+err_lin <- matrix(c(sqrt(cv_bw), RMSE_ridge, RMSE_lasso, RMSE_bas), ncol=1, byrow=TRUE)
+rownames(err_lin) <- c("Linear Model", "Ridge Regression", "LASSO", "Bayes Regression")
+colnames(err_lin) <- "Root Mean Squared Error"
+err_lin <- as.table(err_lin)
+err_lin
+```
+What we can conclude is that with an increase in the value of danceability, a song gains in popularity. This has been confirmed by all models. As has the fact that if a song is more instrumental it gains less popularity. What perplexed us was the fact that valence had a negative effect on our target variable. This means that the more happy a song sounds, the less popularity score it will obtain. This might be due to the fact that music features gradual changes along these dimensions (song attributes) within a broader emotion category remaining the same throughout the musical segment. Sometimes, listeners do not even perceive any discrete emotion in the music. They merely perceive a certain level of arousal. What may be of greater impact, according to LASSO, is whether or not the songs has an overall key C#. This key gives us a strange, but pleasant feeling, sometimes uneasy but freeing. We see some of the songs in this musical key:  
+```{r}
+sub <- subset(df, key=='C#')
+sub <- sub[,c(1,2)]
+head(sub, 20)
+```  
+What is certain is that even regularizing our linear regression fit did not yield better results, not even when the statistical analysis is undertaken within the context of Bayesian inference. This gives us the motivation to try predicting popularity from another angle. We further conduct an analysis on how correctly a model can classify songs to highly popular and not so popular, i.e. having a popularity score > 75 or not.  
+
+
+# 4. Classification  Models  
+The following models will be evaluated using several metrics:  
+
+* **Accuracy** tells us the proportion of observation the model has classified correctly, i.e. 1-Error Rate.  
+* **True Positive Rate or Recall** showing percentage of relevant instances that are retrieved i.e. what proportion of songs that are actually with a high popularity score were diagnosed as such.  
+* **Precision:**  a measure that tells us what songs classified as highly popular are actually that popular.  
+
+These are obtained from a confusion matrix that depicts all possible outcomes from the model:  
+
+* A **true positive** is an outcome where the model correctly predicts the positive class. Similarly, a **true negative** is an outcome where the model correctly predicts the negative class.  
+* A **false positive** is an outcome where the model incorrectly predicts the positive class. And a **false negative** is an outcome where the model incorrectly predicts the negative class.  
+
+## 4.1 Logistic Regression  
+We now use logistic regression to build a model that predicts the probability a song is highly popular among users (i.e. has a popularity score above 75). We will begin by transforming the popularity score into a factor of two levels: high and low. After re-ordering its levels for an ease of interpretation, we fit our models to predict the probability of a song being very popular: $P(Y = high\ popularity \mid X)$.  
+```{r}
+dataset <- read.csv("C:/Users/sando/Documents/R/Statistical Learning 2/Project/Spotify19000.csv")
+
+library(dplyr)
+dataset <- dataset %>% distinct()
+
+keys <- c('C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B')
+dataset$key <- factor(dataset$key, labels = keys)
+
+dataset$audio_mode <- factor(ifelse(dataset$audio_mode==0, 'minor', 'major'))
+
+dataset$song_duration_ms <- dataset$song_duration_ms/60000
+names(dataset)[names(dataset) == 'song_duration_ms'] <- 'song_duration'
+
+dataset$time_signature <- factor(dataset$time_signature)
+dataset <- dataset[, c(-1,-2)]
+
+###Contrasts:
+dataset$song_popularity <- factor(ifelse(dataset$song_popularity>75, 'high', 'low'))
+
+#Using the contrasts() function, we see that R created a dummy variable with a 1 for 
+#songs that are not very popular. NOPE: We use R's relevel() function to re-order the levels 
+#of the factor, so to have an easier interpretation of the model we build.
+dataset$song_popularity <- relevel(dataset$song_popularity, ref = 2)
+contrasts(dataset$song_popularity) 
+```  
+We build our null model - where the intercept is now the log odds of "success", estimated without reference to any predictors. This means that none of the songs' attributes have an effect to its popularity. We continue using all variables for the second, saturated, model but as we did in the linear regression case, we need to check whether some of the predictors have a high VIF value.  
+```{r}
+reg_h0 <- glm(song_popularity ~ +1, data=dataset, family="binomial")
+
+reg_full <- glm(song_popularity ~ ., data=dataset, family="binomial")
+car::vif(reg_full)
+```  
+We observe that energy does not have a high VIF value as it did in the previous case, so we do not exclude it from the model. By looking at the summary of this model:  
+```{r}
+summary(reg_full)
+```  
+we see that using a logistic regression, it gives us the estimate, standard errors, z-score and p-values on each of the coefficients. In comparison with the full linear regression model, we can see that different predictors are significant. Take for instance the predictors where the p-value < 0.001:  
+
+* acousticness
+* danceability
+* energy
+* instrumentalness
+* loudness
+* audio valence  
+  
+which are different from the regression fit, excluding danceability and instrumentalness.  
+The estimates now give the change in the log odds of the outcome for a one unit increase in the predictor variable:
+
+* For every one unit change in song duration, the log odds of a song being popular increase by 0.06305;  
+* For every one unit change in acousticness, the log odds of a song being popular decrease by 0.9296;  
+* For every one unit change in danceability, the log odds of a song being popular increase by 1.709; etc.  
+
+We also see two forms of deviance - the null deviance and the residual deviance. Deviance is a measure of goodness of fit of a generalized linear model. The null deviance shows how well the response variable is predicted by a model that includes only the intercept and the residual deviance reflects the saturated model, and it has reduced by 575.2 points on 14899 degrees of freedom. This is equivalent to comparing a pair of nested models where the null model is given by $H_0:$ There is no relationship between the X variables and the Y variable, i.e. the predictions are no closer to the actual Y values than you would expect by chance; with the full model under $H_1:$ All X variables relate with Y. The results from our hypothesis testing tells us that the predictors should not be removed from the model since Pr(>Chi) is very small (<2.2e-16):  
+```{r}
+anova(reg_h0, reg_full, test="Chisq")
+```  
+
+The logit function is the natural log of the odds that the response variable (in our case - song popularity) equals one of the categories (high popularity vs low popularity). The type="response" option tells R to output probabilities of the form $P(Y = 1 \mid X)$., as opposed to other information such as the logit. These values correspond to the probability of the song being very popular.  The first 6 probabilities are shown:  
+```{r}
+log_prob <- predict(reg_full, type="response")
+head(log_prob)
+```  
+We further note how many observations were correctly or incorrectly classified provided that a highly popular song has a probability above 0.5:  
+```{r}
+glm_pred <- rep("low",nrow(dataset)) 
+glm_pred[log_prob>.5] <- "high"
+table(dataset$song_popularity,glm_pred)
+TP<-0
+TN<-13945
+FP<-0
+FN<-981
+n<-nrow(dataset)
+
+#Overall error rate = FP + FN / all observations:
+err_full <- round((FP+FN)/n*100,2) #6.5724%
+
+#Accuracy = TP+TN/all
+acc_full <- round((TP+TN)/n*100,2) #93.4275%
+
+#True Positive Rate = TP / TP + FN 
+tpr_full <- round(TP/(TP+FN)*100,2) #0
+
+#False Positive Rate = FP / FP + TN
+fpr_full <- round(FP/(FP+TN)*100,2) #0
+
+#Specificity = 1 - FPR
+spec_full <- round((1 - (fpr_full/100))*100,2) #100%
+
+#Precision = TP/TP+FP
+prec_full <- 0 
+
+```  
+* **Accuracy:** `r acc_full`%    
+* **True Positive Rate:** `r tpr_full`%     
+* **Specificity:** `r spec_full`%   
+* **Precision:** `r prec_full`%  
+
+To improve these results, we can construct a ROC curve that will show us the optimal threshold for our data to help deal with the trade-off between TPR (sensitivity) and specificity (1-FPR). Ideally it would be closer to the top-left corner and indicate good performance. This is effective for imbalanced binary classification, as it focuses on the minority class. We calculate the area under the ROC curve - AUC, which is equivalent to the probability that a randomly chosen positive instance is ranked higher than a randomly chosen negative instance.  
+```{r}
+library(pROC)
+roc_out <- roc(dataset$song_popularity, log_prob, levels=c("low", "high"))
+plot(roc_out, print.auc=TRUE, legacy.axes=TRUE, xlab="False positive rate", ylab="True positive rate")
+coords(roc_out, "best", transpose=TRUE) #thresh = 0.068
+```  
+So we can see that our model's predictions are 72.3% correct, and we lower the threshold to get the best trade-off and obtain the following results:  
+```{r}
+log_prob_th <- predict(reg_full, type="response")
+glm_pred_th <- rep("low",nrow(dataset)) 
+glm_pred_th[log_prob_th>.068] <- "high"
+table(dataset$song_popularity,glm_pred_th)
+
+TP<-715
+TN<-8371
+FP<-5574
+FN<-266
+n<- nrow(dataset)
+
+#Overall error rate = FP + FN / all observations:
+err_th <- round((FP+FN)/n*100,2) 
+
+#Accuracy = TP+TN/all
+acc_th <- round((TP+TN)/n*100,2) 
+
+#True Positive Rate = TP / TP + FN 
+tpr_th <- round(TP/(TP+FN)*100,2) 
+
+#False Positive Rate = FP / FP + TN
+fpr_th <- round(FP/(FP+TN)*100,2)
+
+#Specificity = 1 - FPR
+spec_th <- round((1 - (fpr_th/100))*100,2) 
+
+#Precision = TP/TP+FP
+prec_th <- round(TP/(TP+FP)*100,2) 
+```  
+* **Accuracy:** `r acc_th`%  
+* **True Positive Rate:** `r tpr_th`%  
+* **Specificity:** `r spec_th`%   
+* **Precision:** `r prec_th`%  
+
+which when we look at for the first time may seem worse (if we focus too much on the error rate), but precision has jumped to `r prec_th`%, similar to how TPR and FPR have increased.  
+  
+As observed in the linear regression analysis, many of the variables used are not associated with the response (i.e. they are non-significant) and including such irrelevant variables leads to unnecessary complexity in the resulting model. Again, we perform a feature selection using backward selection:    
+```{r}
+step_mod <- step(reg_full, steps=10,  trace=1, direction="backward") 
+```  
+and accordingly the model that would, in theory, maximize predictive capability is:  
+$$ popularity = \beta_{0}\ + \beta_{1}duration\ + \beta_{2}valence\ + \beta_{3}acousticness\ + \beta_{4}danceability\ + \beta_{5}energy\ +$$ $$\beta_{6}instrumentalness\ + \beta_{7}loudness $$  
+```{r}
+reg_bw <- glm(song_popularity ~ song_duration + audio_valence + acousticness +
+                        danceability + energy + instrumentalness + loudness, 
+                        data=dataset, family='binomial')
+
+summary(reg_bw)
+```  
+Comparing the full and the reduced model obtained by backward selection gives us a result of Pr(>Chi)=0.3171 so we can safely remove some of the predictors.  
+```{r}
+anova(reg_bw, reg_full, test="Chisq")
+```  
+  
+Not to run the risk of over-fitting, we consider a train-validation (test) set approach.  
+```{r}
+set.seed(42)
+dataset <- dataset[sample(nrow(dataset)),] #randomly shuffle data
+split <- round(nrow(dataset) *0.80)
+train_set <- dataset[1:split, ]
+test_set <- dataset[(split+1):nrow(dataset),]
+
+reg_tr <- glm(song_popularity ~ song_duration + audio_valence + acousticness + danceability + energy + instrumentalness + loudness, data=train_set, family='binomial')
+
+summary(reg_tr)
+```  
+As mentioned previously, the estimates give the change in the log odds of the outcome for a one unit increase in the predictor variable:  
+
+* For every one unit change in song duration, the log odds of a song being popular increases by 0.08;  
+* For every one unit change in valence, the log odds of a song being popular decreases by 0.9;  
+* For every one unit change in acousticness, the log odds of a song being popular decreases by 0.75;  
+* For every one unit change in danceability, the log odds of a song being popular increases by 1.87;  
+* For every one unit change in energy, the log odds of a song being popular decreases by 2.53;  
+* For every one unit change in instrumentalness, the log odds of a song being popular decreases by 3.82;  
+* For every one unit change in loudness, the log odds of a song being popular increases by 0.23.  
+
+Since these coefficients can never be known for sure, we construct 95% confidence intervals in terms of their effect on the logg odds of a song being popular:  
+
+```{r}
+exp(confint(reg_tr))
+```  
+
+The followig are the **results of the model fitted on the training set**, where judging by AUC the model predicts correctly 71.7% of the data:  
+```{r}
+pred_reg_tr <- predict(reg_tr, train_set, type = 'response')
+
+
+###Results on training set:
+roc_out <- roc(train_set$song_popularity, pred_reg_tr, levels=c("high", "low"))
+plot(roc_out, print.auc=TRUE, legacy.axes=TRUE, xlab="False positive rate", ylab="True positive rate")
+coords(roc_out, "best", transpose = TRUE) #best thresh is 0.06911304
+
+train_pred <- rep("low",nrow(train_set)) 
+train_pred[pred_reg_tr>.0691] <- "high"
+table(train_set$song_popularity, train_pred)
+
+TP<-565
+TN<-6758
+FP<-4398
+FN<-220
+n <- nrow(train_set)
+#Overall error rate = FP + FN / all observations:
+err_train <- round((FP+FN)/n*100,2) 
+
+#Accuracy = TP+TN/all
+acc_train <- round((TP+TN)/n*100,2) 
+
+#True Positive Rate = TP / TP + FN 
+tpr_train <- round(TP/(TP+FN)*100,2) 
+
+#False Positive Rate = FP / FP + TN
+fpr_train <- round(FP/(FP+TN)*100,2) 
+
+#Specificity = 1 - FPR
+spec_train <- round((1 - (fpr_train/100))*100,2) 
+
+#Precision = TP/TP+FP
+prec_train <- round(TP/(TP+FP)*100,2) 
+
+```  
+* **Training accuracy:** `r acc_train`%  
+* **True Positive Rate:** `r tpr_train`%  
+* **Precision:** `r prec_train`%  
+
+And respectively, the **results of the model fitted on the test set**:  
+```{r}
+pred_reg_tr <- predict(reg_tr, newdata = test_set, type = 'response')
+
+roc_out <- roc(test_set$song_popularity, pred_reg_tr, levels=c("high", "low"))
+plot(roc_out, print.auc=TRUE, legacy.axes=TRUE, xlab="False positive rate", ylab="True positive rate")
+
+###We use the same threshold as in the training set.
+test_pred <- rep("low",nrow(test_set)) 
+test_pred[pred_reg_tr>.0691] <- "high"
+table(test_set$song_popularity, test_pred)
+
+TP<-144
+TN<-1675
+FP<-1114
+FN<-52
+n<-nrow(test_set)
+
+#Overall error rate = FP + FN / all observations:
+err_test <- round((FP+FN)/n*100,2) 
+
+#Accuracy = TP+TN/all
+acc_test <- round((TP+TN)/n*100,2) 
+
+#True Positive Rate = TP / TP + FN 
+tpr_test <- round(TP/(TP+FN)*100,2) 
+
+#False Positive Rate = FP / FP + TN
+fpr_test <- round(FP/(FP+TN)*100,2) 
+
+#Specificity = 1 - FPR
+spec_test <- round((1 - (fpr_test/100))*100,2) 
+
+#Precision = TP/TP+FP
+prec_test <- round(TP/(TP+FP)*100,2) 
+```  
+* **Testing accuracy:** `r acc_test`%  
+* **True Positive Rate:** `r tpr_test`%  
+* **Precision:** `r prec_test`%  
+
+
+We see that the accuracy of the model is `r round(acc_test)`%. With respect to the training set, this does not differ. The relevant instances that are retrieved is shown by the TPR equaling to`r round(tpr_test)`%, a little higher than the one obtained in training set results. Judging also by the ROC curve, we see that the model's predictions are correct 72% of the time by setting the threshold to 0.0691, obtained from fitting the model on the training set.  
+
+## 4.2 Quadratic Discriminant Analysis 
+We now try to fit a non-linear boundary between classifiers. To do so, we perform a Quadratic Discriminant Analysis on our dataset. The QDA classifier results from assuming that the observations from each class are drawn from a Gaussian distribution, and plugging estimates for the parameters into Bayes' theorem in order to perform prediction. It assumes that each class has its own covariance matrix.  
+```{r}
+library(MASS)
+qda_red <- qda(song_popularity ~ song_duration + audio_valence + acousticness +
+              danceability + energy + instrumentalness + loudness, data=train_set)
+qda_red
+```  
+The prior probabilities of the group tell us that 93.42% of training data corresponds to a song having popularity score below 75, while only 6.57% of the observations are very popular among users.  
+QDA also provides us the group means - estimated average of each predictor within each class. These suggest that when songs have a high popularity score, their song duration, danceability, enery and loudness are greater than in songs with low popularity score. We expected valence to be greater too, but we suspect that this might be due to classes being unbalanced...unless people do feel better with pleasing and mellow music, but not too energetic and danceable. On the contrary, songs with low popularity tend to have greater acousticness and instrumentalness values, which does not come as a surprise.  
+```{r}
+qda_pred <- predict(qda_red,test_set)$class 
+table(test_set$song_popularity, qda_pred)
+
+TP<-28
+TN<-2645
+FP<-144
+FN<-168
+n<-nrow(test_set)
+
+#Overall error rate = FP + FN / all observations:
+err_qda <- round((FP+FN)/n*100,2) 
+
+#Accuracy = TP+TN/all
+acc_qda <- round((TP+TN)/n*100,2) 
+
+#True Positive Rate = TP / TP + FN 
+tpr_qda <- round(TP/(TP+FN)*100,2) 
+
+#False Positive Rate = FP / FP + TN
+fpr_qda <- round(FP/(FP+TN)*100,2) 
+
+#Specificity = 1 - FPR
+spec_qda <- round((1 - (fpr_qda/100))*100,2) 
+
+#Precision = TP/TP+FP
+prec_qda <- round(TP/(TP+FP)*100,2) 
+```  
+* **Testing accuracy:** `r acc_qda`%  
+* **True Positive Rate:** `r tpr_qda`%    
+* **Precision:** `r prec_qda`%  
+
+Comparing this to the logistic model, using QDA has yielded us a boost in accuracy to almost `r round(acc_qda)`%. TPR has decreased and precision of returning relevant instances at a rate of `r prec_qda`%.  
+
+## 4.3 Naive Bayes Classification  
+We additionally decide to fit a generative model - Naive Bayes, which is a classification technique based on Bayes’ Theorem with an assumption of independence among predictors. In simple terms, a Naive Bayes classifier assumes that the presence of a particular feature in a class is unrelated to the presence of any other feature.  
+```{r}
+library(e1071)
+bayes_model <- naiveBayes(song_popularity ~ song_duration + audio_valence + acousticness + danceability + energy + instrumentalness + loudness, data=train_set)
+bayes_pred <- predict(bayes_model, test_set)
+
+table(test_set$song_popularity, bayes_pred)
+
+TP<-71
+TN<-2330
+FP<-459
+FN<-125
+n<-nrow(test_set)
+
+#Overall error rate = FP + FN / all observations:
+err_bayes <- round((FP+FN)/n*100,2) 
+
+#Accuracy = TP+TN/all
+acc_bayes <- round((TP+TN)/n*100,2) 
+
+#True Positive Rate = TP / TP + FN 
+tpr_bayes <- round(TP/(TP+FN)*100,2) 
+
+#False Positive Rate = FP / FP + TN
+fpr_bayes <- round(FP/(FP+TN)*100,2) 
+
+#Specificity = 1 - FPR
+spec_bayes <- round((1 - (fpr_bayes/100))*100,2) 
+
+#Precision = TP/TP+FP
+prec_bayes <- round(TP/(TP+FP)*100,2) 
+
+```  
+* **Testing accuracy:** `r acc_bayes`%  
+* **True Positive Rate:** `r tpr_bayes`%    
+* **Precision:** `r prec_bayes`%  
+
+Although accuracy and precision are higher when compared to the logistic classifier, they are lower when compared to QDA. But, TPR has increased to `r tpr_bayes` with respect to QDA's results, meaning that now a higher rate of correctly classifying songs with high popularity.  
+
+## 4.4 K-Nearest Neighbours
+Since we suspect that songs that share similar features have approximately the same popularity score, we perform a K-Nearest Neighbour classification for the test set from training set. Unlike most algorithms, K-NN is a non-parametric model which means that it does not make any assumptions about the dataset. This makes the algorithm more effective since it can handle realistic data. K-NN is a lazy algorithm, as it memorizes the training data set instead of learning  a discriminative function from the training data. For each observation of the validation set, the K nearest (in Euclidean distance) validation set vectors are found, and the classification is decided by majority vote. In our case, we will fit the model using a value of one for K, meaning that it will classify a song based on most similar features with another already classified observation in the training set. To perform this kind of modeling, we have to use the original numerical predictors we had in the dataset, prior to modifications.  
+```{r}
+dataset$key <- as.numeric(dataset$key) - 1
+
+dataset$audio_mode <- ifelse(dataset$audio_mode=='major', 1, 0)
+
+dataset$time_signature <- ifelse(dataset$time_signature==0, 0, ifelse(dataset$time_signature==1, 1, ifelse(dataset$time_signature==3, 3, ifelse(dataset$time_signature==4, 4, 5))))
+
+train_set <- dataset[1:split, ]
+test_set <- dataset[(split+1):nrow(dataset),] 
+```
+```{r}
+library(class)
+knn_pred <- knn(train_set[,-14], test_set[,-14], train_set$song_popularity, k=1)
+table(test_set$song_popularity, knn_pred)
+TP<-24
+TN<-2617
+FP<-172
+FN<-172
+n<-nrow(test_set)
+
+#Overall error rate = FP + FN / all observations:
+err_knn <- round((FP+FN)/n*100,2) 
+
+#Accuracy = TP+TN/all
+acc_knn <- round((TP+TN)/n*100,2) 
+
+#True Positive Rate = TP / TP + FN 
+tpr_knn <- round(TP/(TP+FN)*100,2) 
+
+#False Positive Rate = FP / FP + TN
+fpr_knn <- round(FP/(FP+TN)*100,2) 
+
+#Specificity = 1 - FPR
+spec_knn <- round((1 - (fpr_qda/100))*100,2) 
+
+#Precision = TP/TP+FP
+prec_knn <- round(TP/(TP+FP)*100,2) 
+```  
+When setting K=1, the model's accuracy is similar to QDA - `r acc_knn`%, which is far better than what we got using logistic regression. Precision is now `r prec_knn`% which in comparison to QDA now is not much, but higher than logistic regression. As with QDA and Bayes, using KNN we get better results than the logistic regression model.  
+
+## 4.5 Results and Discussion  
+
+```{r}
+err_class <- matrix(c(acc_test, acc_qda, acc_bayes, acc_knn, prec_test, prec_qda, prec_bayes, prec_knn, tpr_test, tpr_qda, tpr_bayes, tpr_knn), ncol=4, byrow=TRUE)
+rownames(err_class) <- c("Accuracy","Precision","Recall / TPR")
+colnames(err_class) <- c("Logistic Regression", "QDA", "Bayes", "1-NN")
+err_class <- as.table(err_class)
+err_class
+```  
+
+Looking at the results of the classifiers, we can say with certainty that QDA performed the best in term of accuracy with a rate of `r acc_qda`%.  We get a similar accuracy using 1-NN - `r acc_knn`%. Since this is a non-parametric approach, we did expect it to outperform logistic regression, but we suspect that setting $K$=1 induces high variance and an *overly* flexible decision boundary. Since we have a sufficient number of training examples, and the variance of the classifier is not a major concern, QDA serves as a compromise between K-NN and the logistic regression approach. Though not as flexible as KNN, it still yielded better results, including the ones for precision (`r prec_qda`%) and recall (TPR) (`r tpr_qda`). But, by fitting the Naive Bayes Classification model, we obtained an accuracy rate of somewhere in between these models - `r acc_bayes`, but a recall (TPR) of `r tpr_bayes` which outperformed both QDA and 1-NN. This might be due to the naive assumptions, i.e. independence among features, but speed does come at a cost. So, by using QDA, we see that `r tpr_qda`% of the songs with a popularity score > 80 were diagnosed as such and that `r prec_qda` of the songs classified as having popularity score > 80 are actually that popular. Comparing these results with the ones obtained by the logistic classifier, we see that using logistic regression gives a recall rate almost 5 times larger than QDA - `r acc_test`. This comes as a surprise, since it supports only linear solutions, but we suspect that this is due to the classes being unbalanced.  
+
+# 5. Technical Appendix  
+## 5.1 Correlation  
+Correlation is a statistical technique that can show whether and how strongly pairs of variables are related. Pearson's correlation coefficient (r) is a measure of the strength of the association between the two variables.
+$$r_{xy} = \frac{s_{xy}}{s_xs_y}=\frac{\sum_{i=1}^n(x_i-\overline{x})(y_i- \overline{y})}{\sqrt{\sum_{i=1}^n(x_i-\overline{x})^2}\sqrt{\sum_{i=1}^n(y_i-\overline{y})^2}}$$  
+
+## 5.2 Variance Inflation Factor (VIF)  
+The variance inflation factor (VIF) quantifies the extent of correlation between one predictor and the other predictors in a model. It is used for diagnosing collinearity/multicollinearity. Higher values signify that it is difficult to impossible to assess accurately the contribution of predictors to a model. It is obtained by:  
+$$VIF = \frac{1}{1-R^2}$$  
+where $R^2$ provides us a proportion of variance explained by a model.  
+
+## 5.3 Regression Models  
+A regression model is a model of relatioship between covariates (predictors) and an outcome (Y).  
+$$Y = f(x) +\epsilon$$ 
+where the observations are realizations of independent random variables whose averages lie on the straight line $\beta_0 + \beta_1x_{i1} + \beta_2x_{i2} ... + \beta_px_{ip}$ i.e.  
+
+$$Y_i = \beta_0 + \beta_1x_{i1} + \beta_2x_{i2} + ... + \beta_px_{ip} + \epsilon_i$$
+
+### 5.3.1 Root Mean Square Error  
+The mean squared error tells us how close a regression line is to a set of points i.e. the difference between the observed $x_i$ and predicted $\hat{x}_i$ value, and we are simply taking its root.  
+$$ RMSE = \sqrt{\frac{1}{n} \sum_{i=1}^n(x_i - \hat{x_i})^2}$$  
+
+### 5.3.2 Estimate of Test Error using Cross Validation  
+The idea is to randomly divide the data into $K$ equal-sized parts. By leafing out part $k$, fit the model to the other $K_1$ parts (combined), and then obtain predictions for the left-out $k$th part. This is done in turn for each part $k=1,2,...,K$, and then the results are combined.  
+
+* Let the $K$ parts be $C_1, C_2,...,C_K$, where $C_k$ denotes the indices of the observations in part $k$. There are $n_k$ observations in part $k$ (when $n$ is a multiple of $K$, $n_k = \frac{n}{K}$).  
+* Compute  
+$$ CV_{K} = \sum_{k=1}^K\frac{n_k}{n}MSE_k $$  
+where  
+$$ MSE_k = \frac{1}{n_k}\sum_{i\epsilon{C_k}}(y_i-\hat{y_i})^2 $$ 
+and $\hat{y_i}$ is the fitted value for observation $i$ obtained from the data with part k removed.  
+
+### 5.3.3 Comparing Nested Models  
+$H_0:$ There is some or no relationship between the X variables and the Y variable. vs the alternative  
+$H_1:$ All X variables relate with Y.  
+
+This is observed with the F-statistic:  
+$$ F = \frac{\frac{RSS_{red} - RSS_{full}}{p}}{ \frac{RSS_{full}}{n-p-1}} $$  
+where $n$ is the number of predictors for the full model, and $p$ is the number of predictors for the reduced. Under $H_0$, this statistic follows a $F_{p,n-p-1}$ distribution.  
+
+### 5.3.4 Confidence Intervals for Regression Coefficients  
+The interval that contains the true value $\beta_i$ in 95% of all samples is given by:  
+$$ CI_{0.95}^\beta = [\hat{\beta}-1.96SE(\hat{\beta}),\ \hat{\beta}+1.96SE(\hat{\beta})] $$  
+
+### 5.3.5 Ridge Reression  
+The ridge regression coefficient estimates are the values that minimize   
+
+$$\sum_{i=1}^n (y_i - \beta_0 - \sum_{j=1}^p\beta_jx_{ij})^2 - \lambda\sum_{j=1}^p\beta_j^2 = RSS + \lambda\sum_{j=1}^p\beta_j^2$$  
+
+where $\lambda \ge 0$ is a *tuning parameter*, that fine-tunes the amoung of penalty and is determined seperately.  
+
+### 5.3.6 LASSO  
+The LASSO is a relatively recent alternative to rigde regression that also performs a variable selection. The LASSO coefficients minimize the quantity  
+
+$$\sum_{i=1}^n (y_i - \beta_0 - \sum_{j=1}^p\beta_jx_{ij})^2 - \lambda\sum_{j=1}^p|\beta_j| = RSS + \lambda\sum_{j=1}^p|\beta_j|$$  
+
+### 5.3.7 Bayes Regression with Bayesian Model Averaging (BMA)
+The previous models behaved as expected but one of their flaws is that they are ignoring the model uncertainty. In brief, only one model is trained and one set of parameters is chosen to train the model. BMA provides a mechanism for accounting for this model uncertainty when deriving the parameter estimates that account for model uncertainty by marginalizing over models as follows: $$p(\theta \vert y)=\sum_{m_i}p(m_i\vert y)p(\theta\vert y, m_i)$$ where $m_i$ are the set of candidate models, $p(m_i\vert y)$ is the posterior probability over the model $m_i$.
+
+Once we have the posterior probability of each model, we can make inference and obtain weighted averages of quantities of interest using these probabilities as weights (hence the name BMA). For example, calculating the probability of the next prediction $y^*$ can be calculated as: $$y^*=\sum_{i=1}y^*_jp(m_i\vert data)$$
+
+## 5.4 Classification Models  
+
+## 5.4.1 Metrics  
+
+$$ Accuracy = \frac{TP+TN}{TP+TN+FP+FN} $$    
+$$ True\ Positive\ Rate\ (Recall) = \frac{TP}{TP+FN} $$  
+$$ Precision = \frac{TP}{TP+FP} $$  
+
+## 5.4.2 Logistic Regression  
+$$ log(\frac{\pi}{1-\pi}) = \beta_0 + \beta_1x_{i1} + \beta_2x_{i2} + ... + \beta_px_{ip} $$  
+such that  
+
+$$ \pi_i = \frac{e^{(\beta_0 + \beta_1x_{i1} + \beta_2x_{i2} + ... + \beta_px_{ip})}}{1 + e^{(\beta_0 + \beta_1x_{i1} + \beta_2x_{i2} + ... + \beta_px_{ip})}}$$  
+
+### 5.4.3 Confidence Intervals for Coefficients  
+The interval that contains the odds ratio  $e^{\beta_i}$ in 95% of all samples is given by:  
+$$ CI_{0.95}^\beta = [e^{\hat{\beta}-1.96SE(\hat{\beta})},\ e^{\hat{\beta}+1.96SE(\hat{\beta})}] $$  
+
+### 5.4.4 Comparing Nested Models  
+$H_0:$ There is some or no relationship between the X variables and the Y variable. vs the alternative  
+$H_1:$ All X variables relate with Y.  
+
+This is observed with a deviance difference test, where deviance is equal to    
+$$Dev(\hat\beta, y) = -2\sum_{i=1}^n[y_ilog(\hat\pi_i) + (1-y_i)log(1-\hat\pi)]$$
+and under $H_0$, the difference $D=Dev_{red} - Dev_{full}$ follows a $\chi_{df_{red}-df_{full}}^2$  
+where $df_{red}$ are the degrees of freedom for the reduced model, and $df_{full}$ are the degrees of freedom for the full model.  
+
+### 5.4.5 Quadratic Discriminant Analysis  
+This classifiers results from assuming that the observations from each class are drawn from a Gaussian distribution, and plugging estimates for the parameters into Bayes’ theorem in order to perform prediction. QDA assumes that an observation from the $k$th class is of the form $X~N(\mu_k,\sum_k)$, where $\sum_k$ is a covariance matrixs for the $k$th class. Under this assumption, the Bayes classifier assigns an observation $X=x$ to the class for which  
+
+$$\delta_k(x) = -\frac{1}{2}(x-\mu_k)^T{\sum_k}^{-1}(x-\mu_k)-\frac{1}{2}log|\sum_k|+log\pi_k$$  
+is largest. So the QDA classifier involves plugging estimates for $\sum_k$, $\mu_k$, and $\pi_k$ into the equation, and then assigning an observation $X=x$ to the class for which this quantity is largest. The quantity x appears as a quadratic function.  
+
+### 5.4.6 K - Nearest Neighbours  
+Given a positive integer $K$ and a test observation $x_0$, the $KNN$ classifier first identifies the $K$ points in the training data that are closest to $x_0$, represented by $N_0$. It then estimates the conditional probability for class $k$ as the fraction of points in $N_0$ whose response values equal $k$:  
+
+$$P(Y = k \mid X = x_0) = \frac{1}{K}\sum_{i\epsilon N_0}I(y_i = k)$$  
+
+Finally, KNN applies Bayes rule and classifies the test observation $x_0$ to the class with the largest probability.  
+
+### 5.4.7 Naive Bayes Classification  
+Naive Bayes Classifier calculates the probability of a class given a set of predictor values (i.e $P(Y_i=k \mid x_1,x_2,...,x_n)$). Inputting ths into Bayes' theorem:  
+
+$$ P(Y_i \mid x_1,x_2,...,x_n) = \frac{P(x_1,x_2,...,x_n \mid Y_i=k)P(Y_i=k)}{P(x_1, x_2,...,x_n)} $$  
+where Naive Bayes algorith assume that all predictors are independent of each other and under this assumption  
+$$P(x_1,x_2,...,x_n \mid Y_i=k) = P(x_1 \mid Y_i=k)P(x_2 \mid Y_i=k)...P(x_n \mid Y_i=k)$$  
+
+
+## 5.5 Backward Stepwise Selection  
+*Input:* A full model with $p$ predictors, $M_p$.
+*Output:* Single model with best performance among the ones tested.
+
+1. Let $M_p$ be the full model with $p$ predictors.  
+2. for $k = p, p-1,...,1$:  
+* Consider all $k$ models that contain all but one predictor in $M_k$.  
+* Choose the one having smallest $RSS$ or highest $R^2$, it is $M_{k-1}$.  
+3. Choose a model among the best selected, $M_0,...M_p$, through a given criterion (cross-validated predicted error, $C_p$, $AIC$, $BIC$ or $adjustedR^2$).  
+  
+This is a heuristic research strategy that provides locally optimal solutions that approach an optimal solution globally in a reasonable amount of time. We use it as a cheaper strategy to find a satisfactory model.  
+
+### 5.5.1 Method for Evaluating and Comparing Models  
+Akaike's information criterion (AIC) was used to compare models with different number of predictors. This method makes a mathematical adjustment to the training error rate in order to estimate the test error rate.
+
+$$ AIC = -2l(\hat{\theta})+2d$$
+In the case of linear model with Gaussian errors:  
+
+$$AIC = -2l(\hat{\beta},\hat{\theta})+2d=n\log  \left( \frac{RSS}{n} \right) +2d$$
+We use it in the backward selection. We used AIC to have a selection method capable of storing models with a large number of variables.  
